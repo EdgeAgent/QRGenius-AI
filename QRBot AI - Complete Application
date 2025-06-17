@@ -1,0 +1,484 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { 
+    getAuth, 
+    signInAnonymously, 
+    onAuthStateChanged,
+    signInWithCustomToken
+} from 'firebase/auth';
+import { 
+    getFirestore, 
+    collection, 
+    addDoc, 
+    onSnapshot, 
+    deleteDoc, 
+    doc,
+    updateDoc,
+    arrayUnion,
+    arrayRemove,
+    getDoc,
+    setLogLevel
+} from 'firebase/firestore';
+import { 
+    getStorage, 
+    ref, 
+    uploadBytesResumable, 
+    getDownloadURL,
+    deleteObject
+} from "firebase/storage";
+import { Plus, Bot, MessageSquare, QrCode, BarChart2, Settings, Trash2, X, Loader2, ArrowLeft, UploadCloud, FileText, Globe, Sparkles, Send } from 'lucide-react';
+// Removed 'qrcode.react' import as it was causing a build error. It will be replaced with a direct image API call.
+
+// --- Firebase Configuration ---
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+// --- Firebase Initialization ---
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const storage = getStorage(app);
+setLogLevel('debug');
+
+// --- Main App Component (with Router) ---
+export default function App() {
+    const [path, setPath] = useState(window.location.pathname);
+
+    useEffect(() => {
+        const handlePopState = () => setPath(window.location.pathname);
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+    }, []);
+
+    if (path.startsWith('/chat/')) {
+        const botId = path.split('/')[2];
+        return <PublicChatPage botId={botId} />;
+    }
+    
+    return <DashboardApp />;
+}
+
+// --- Dashboard Application Component ---
+const DashboardApp = () => {
+    const [user, setUser] = useState(null);
+    const [isAuthReady, setIsAuthReady] = useState(false);
+    const [selectedBotId, setSelectedBotId] = useState(null);
+
+    useEffect(() => {
+        const attemptSignIn = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) { console.error("Authentication failed:", error); }
+        };
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => { setUser(currentUser); setIsAuthReady(true); });
+        attemptSignIn();
+        return () => unsubscribe();
+    }, []);
+
+    if (!isAuthReady) return <div className="flex items-center justify-center h-screen bg-gray-100"><Loader2 className="w-12 h-12 animate-spin text-blue-600" /><p className="ml-4 text-lg text-gray-700">Authenticating...</p></div>;
+
+    const view = selectedBotId ? 
+        <BotConfiguration botId={selectedBotId} userId={user.uid} onBack={() => setSelectedBotId(null)} /> : 
+        (user ? <Dashboard userId={user.uid} onSelectBot={setSelectedBotId} /> : <p>Please sign in to continue.</p>);
+
+    return (
+        <div className="flex h-screen bg-gray-100 font-sans">
+            <Sidebar />
+            <div className="flex-1 flex flex-col"><Header user={user} selectedBotId={selectedBotId} onBack={() => setSelectedBotId(null)} /><main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">{view}</main></div>
+        </div>
+    );
+};
+
+
+// --- Helper function for Gemini API calls ---
+const callGemini = async (systemInstruction, userPrompt) => {
+    const apiKey = ""; // Handled by environment
+    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+    const payload = { contents: [ { role: "system", parts: [{ text: systemInstruction }] }, { role: "user", parts: [{ text: userPrompt }] } ] };
+    const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!response.ok) throw new Error(`API request failed with status ${response.status}`);
+    const result = await response.json();
+    if (result.candidates && result.candidates.length > 0) return result.candidates[0].content.parts[0].text;
+    throw new Error("No response from Gemini.");
+};
+
+// --- Dashboard UI Components ---
+const Sidebar = () => (
+    <div className="hidden md:flex flex-col w-64 bg-white border-r border-gray-200">
+        <div className="flex items-center justify-center h-16 border-b"><span className="text-2xl font-bold text-gray-900"><span className="text-blue-600">QR</span>Bot.ai</span></div>
+        <nav className="flex-1 px-4 py-6 space-y-2"><a href="/" className="flex items-center px-4 py-2 text-gray-700 bg-gray-200 rounded-lg"><Bot className="w-5 h-5 mr-3" />My Chatbots</a><a href="#" className="flex items-center px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg"><Settings className="w-5 h-5 mr-3" />Settings</a></nav>
+        <div className="px-4 py-6 border-t"><p className="text-xs text-gray-400">© 2024 QRBot.ai</p></div>
+    </div>
+);
+
+const Header = ({ user, selectedBotId, onBack }) => {
+    const headerTitle = selectedBotId ? "Bot Configuration" : "My Chatbots";
+    return (
+        <header className="flex-shrink-0 flex items-center justify-between h-16 bg-white border-b border-gray-200 px-4 sm:px-6 lg:px-8">
+            <div className="flex items-center">{selectedBotId && <button onClick={onBack} className="mr-4 p-2 rounded-full hover:bg-gray-100"><ArrowLeft className="w-5 h-5 text-gray-600" /></button>}<h1 className="text-xl font-semibold text-gray-800">{headerTitle}</h1></div>
+            <div className="flex items-center space-x-4"><div className="text-sm text-right"><p className="font-medium text-gray-800">User ID</p><p className="text-xs text-gray-500 truncate" style={{maxWidth: '150px'}}>{user ? user.uid : 'N/A'}</p></div></div>
+        </header>
+    );
+};
+
+const Dashboard = ({ userId, onSelectBot }) => {
+    const [chatbots, setChatbots] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const chatbotsCollectionPath = useMemo(() => `artifacts/${appId}/users/${userId}/chatbots`, [userId]);
+
+    useEffect(() => {
+        if (!userId) return;
+        setIsLoading(true);
+        const q = collection(db, chatbotsCollectionPath);
+        const unsubscribe = onSnapshot(q, (querySnapshot) => {
+            const botsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setChatbots(botsData);
+            setIsLoading(false);
+        }, (error) => { console.error("Error fetching chatbots:", error); setIsLoading(false); });
+        return () => unsubscribe();
+    }, [chatbotsCollectionPath, userId]);
+
+    const handleCreateBot = async (botName) => {
+        if (!botName.trim()) return;
+        try {
+            await addDoc(collection(db, chatbotsCollectionPath), { name: botName, createdAt: new Date().toISOString(), status: 'Training', conversations: 0, dataSources: { files: [], urls: [] }, appearance: { welcomeMessage: `Hello! I'm ${botName}. How can I help you?` }, ownerId: userId });
+            setIsModalOpen(false);
+        } catch (error) { console.error("Error creating chatbot:", error); }
+    };
+
+    const handleDeleteBot = async (botId) => {
+        try { await deleteDoc(doc(db, chatbotsCollectionPath, botId)); } catch (error) { console.error("Error deleting chatbot:", error); }
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="flex justify-between items-center"><p className="text-gray-600">You have {chatbots.length} chatbots.</p><button onClick={() => setIsModalOpen(true)} className="flex items-center justify-center bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold shadow-md hover:bg-blue-700 transition-colors duration-300"><Plus className="w-5 h-5 mr-2" />Create New Bot</button></div>
+            {isLoading ? <div className="flex justify-center items-center py-20"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /><p className="ml-3 text-gray-600">Loading your chatbots...</p></div> : chatbots.length > 0 ? <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">{chatbots.map(bot => <ChatbotCard key={bot.id} bot={bot} onDelete={handleDeleteBot} onSelect={() => onSelectBot(bot.id)} />)}</div> : <div className="text-center py-20 bg-white rounded-lg border-2 border-dashed border-gray-300"><Bot className="mx-auto h-12 w-12 text-gray-400" /><h3 className="mt-2 text-sm font-medium text-gray-900">No chatbots yet</h3><p className="mt-1 text-sm text-gray-500">Get started by creating a new chatbot.</p></div>}
+            <CreateBotModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onCreate={handleCreateBot} />
+        </div>
+    );
+};
+
+const ChatbotCard = ({ bot, onDelete, onSelect }) => (
+    <div className="bg-white rounded-lg shadow-md border border-gray-200 flex flex-col transition-shadow hover:shadow-lg">
+        <div className="p-5 flex-grow cursor-pointer" onClick={onSelect}><div className="flex justify-between items-start"><h3 className="font-bold text-lg text-gray-800">{bot.name}</h3><span className={`px-2 py-1 text-xs font-semibold rounded-full ${bot.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{bot.status}</span></div><div className="mt-4 flex items-center space-x-4 text-sm text-gray-500"><div className="flex items-center"><MessageSquare className="w-4 h-4 mr-2" /><span>{bot.conversations} conversations</span></div></div></div>
+        <div className="p-4 bg-gray-50 border-t border-gray-200 flex items-center justify-between"><div className="flex space-x-2"><button className="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"><Settings className="w-5 h-5" /></button><button className="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"><QrCode className="w-5 h-5" /></button><button className="p-2 text-gray-500 hover:text-blue-600 hover:bg-gray-200 rounded-full transition-colors"><BarChart2 className="w-5 h-5" /></button></div><button onClick={(e) => { e.stopPropagation(); onDelete(bot.id); }} className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-100 rounded-full transition-colors"><Trash2 className="w-5 h-5" /></button></div>
+    </div>
+);
+
+
+// --- Bot Configuration with Deployment Section ---
+const BotConfiguration = ({ botId, userId, onBack }) => {
+    const [bot, setBot] = useState(null);
+    const botDocRef = useMemo(() => doc(db, `artifacts/${appId}/users/${userId}/chatbots`, botId), [userId, botId]);
+    useEffect(() => {
+        const unsubscribe = onSnapshot(botDocRef, (doc) => { if (doc.exists()) { setBot({ id: doc.id, ...doc.data() }); } else { onBack(); } });
+        return () => unsubscribe();
+    }, [botDocRef, onBack]);
+    if (!bot) return <div className="flex justify-center items-center py-20"><Loader2 className="w-8 h-8 animate-spin text-blue-500" /><p className="ml-3 text-gray-600">Loading bot configuration...</p></div>;
+    return (
+        <div className="max-w-4xl mx-auto space-y-8">
+            <h2 className="text-2xl font-bold text-gray-800">{bot.name}</h2>
+            <Deployment bot={bot} />
+            <Appearance bot={bot} botDocRef={botDocRef} />
+            <DataSources bot={bot} botDocRef={botDocRef} userId={userId} />
+        </div>
+    );
+};
+
+// --- Child Components of BotConfiguration ---
+const Deployment = ({ bot }) => {
+    const chatUrl = `${window.location.origin}/chat/${bot.id}`;
+    const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=128x128&data=${encodeURIComponent(chatUrl)}`;
+    const [copied, setCopied] = useState(false);
+
+    const handleCopy = () => {
+        const textArea = document.createElement("textarea");
+        textArea.value = chatUrl;
+        document.body.appendChild(textArea);
+        textArea.select();
+        try {
+            document.execCommand('copy');
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch (err) {
+            console.error('Failed to copy text: ', err);
+        }
+        document.body.removeChild(textArea);
+    };
+
+    return (
+        <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+            <h3 className="text-xl font-semibold mb-4 text-gray-800">🚀 Deploy Your Bot</h3>
+            <div className="flex flex-col md:flex-row items-center gap-6">
+                <div className="border p-4 rounded-lg bg-gray-50">
+                    <img src={qrApiUrl} alt="QR Code for chatbot" width="128" height="128" />
+                </div>
+                <div className="flex-1">
+                    <p className="text-sm text-gray-600 mb-2">Share this QR code or link to let users interact with your bot.</p>
+                    <div className="flex rounded-md shadow-sm">
+                        <input type="text" readOnly value={chatUrl} className="flex-1 block w-full px-3 py-2 bg-gray-100 border border-gray-300 rounded-l-md sm:text-sm"/>
+                        <button onClick={handleCopy} className="inline-flex items-center px-4 py-2 border border-l-0 border-gray-300 text-sm font-medium rounded-r-md text-gray-700 bg-gray-50 hover:bg-gray-100">{copied ? 'Copied!' : 'Copy'}</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+const Appearance = ({ bot, botDocRef }) => {
+    const [welcomeMessage, setWelcomeMessage] = useState(bot.appearance?.welcomeMessage || '');
+    const [isGenerating, setIsGenerating] = useState(false);
+    const handleUpdateMessage = async () => { await updateDoc(botDocRef, { "appearance.welcomeMessage": welcomeMessage }); };
+    const handleGenerateMessage = async () => {
+        setIsGenerating(true);
+        try {
+            const systemInstruction = "You are a creative copywriter. Generate a short, friendly, and professional welcome message for a chatbot. The message should be welcoming and ask how the user can be helped. Respond with only the message text.";
+            const generatedMessage = await callGemini(systemInstruction, `Generate a welcome message for a chatbot for this type of business: ${bot.name}`);
+            setWelcomeMessage(generatedMessage.replace(/^"|"$/g, ''));
+        } catch (error) { console.error("Error generating message:", error); } 
+        finally { setIsGenerating(false); }
+    };
+    return (
+        <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+            <h3 className="text-xl font-semibold mb-4 text-gray-800">✨ Appearance</h3>
+            <div>
+                <label htmlFor="welcome-message" className="block text-sm font-medium text-gray-700">Welcome Message</label>
+                <div className="mt-1 flex rounded-md shadow-sm">
+                    <textarea id="welcome-message" rows="3" value={welcomeMessage} onChange={(e) => setWelcomeMessage(e.target.value)} className="flex-1 block w-full focus:ring-blue-500 focus:border-blue-500 min-w-0 rounded-none rounded-l-md sm:text-sm border-gray-300"></textarea>
+                    <button onClick={handleGenerateMessage} disabled={isGenerating} className="inline-flex items-center px-3 rounded-r-md border border-l-0 border-gray-300 bg-gray-50 text-gray-500 text-sm hover:bg-gray-100 disabled:bg-gray-200">{isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5 text-yellow-500" />}</button>
+                </div>
+                <div className="mt-3 flex justify-end"><button onClick={handleUpdateMessage} className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-md text-sm hover:bg-blue-700">Save Message</button></div>
+            </div>
+        </div>
+    );
+};
+
+const DataSources = ({ bot, botDocRef, userId }) => {
+    const fileInputRef = useRef(null);
+    const [uploadProgress, setUploadProgress] = useState({});
+    const handleFileAdd = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        const storagePath = `artifacts/${appId}/users/${userId}/bots/${bot.id}/${file.name}`;
+        const storageRef = ref(storage, storagePath);
+        const uploadTask = uploadBytesResumable(storageRef, file);
+        uploadTask.on('state_changed', 
+            (snapshot) => { setUploadProgress(prev => ({ ...prev, [file.name]: (snapshot.bytesTransferred / snapshot.totalBytes) * 100 })); }, 
+            (error) => { console.error("Upload failed:", error); setUploadProgress(prev => ({ ...prev, [file.name]: 'error' })); }, 
+            async () => {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                const newFile = { name: file.name, size: file.size, type: file.type, path: storagePath, url: downloadURL, status: 'processing' };
+                await updateDoc(botDocRef, { "dataSources.files": arrayUnion(newFile) });
+                setUploadProgress(prev => { const copy = {...prev}; delete copy[file.name]; return copy; });
+            }
+        );
+        event.target.value = null;
+    };
+    const handleFileDelete = async (fileToDelete) => {
+        try {
+            const fileRef = ref(storage, fileToDelete.path);
+            await deleteObject(fileRef);
+            await updateDoc(botDocRef, { "dataSources.files": arrayRemove(fileToDelete) });
+        } catch(error) {
+            console.error("Error deleting file:", error);
+            await updateDoc(botDocRef, { "dataSources.files": arrayRemove(fileToDelete) });
+        }
+    };
+    return (
+        <div className="bg-white p-6 rounded-lg shadow-md border border-gray-200">
+            <h3 className="text-xl font-semibold mb-4 text-gray-800">Data Sources</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                 <div>
+                    <div className="flex items-center justify-between mb-3"><h4 className="font-medium text-gray-700">Files</h4><button onClick={() => fileInputRef.current.click()} className="text-sm font-medium text-blue-600 hover:text-blue-800">Upload</button><input type="file" ref={fileInputRef} onChange={handleFileAdd} className="hidden" /></div>
+                    <div className="border rounded-lg p-3 min-h-[150px] bg-gray-50 space-y-2">
+                        {bot.dataSources?.files?.map((file, i) => (
+                            <div key={i} className="flex items-center justify-between text-sm bg-white p-2 rounded-md border">
+                                <div className="flex items-center truncate"><FileText className="w-4 h-4 mr-2 text-gray-500 flex-shrink-0"/><span className="truncate">{file.name}</span></div>
+                                <button onClick={() => handleFileDelete(file)}><Trash2 className="w-4 h-4 text-gray-400 hover:text-red-500"/></button>
+                            </div>
+                        ))}
+                        {Object.entries(uploadProgress).map(([name, progress]) => (
+                            <div key={name} className="bg-white p-2 rounded-md border"><p className="text-sm truncate">{name}</p><div className="w-full bg-gray-200 rounded-full h-2.5 mt-1"><div className="bg-blue-600 h-2.5 rounded-full" style={{width: `${progress}%`}}></div></div></div>
+                        ))}
+                         {(!bot.dataSources?.files || bot.dataSources.files.length === 0) && Object.keys(uploadProgress).length === 0 && <div className="text-center py-8 text-gray-500"><UploadCloud className="mx-auto h-8 w-8"/><p className="mt-1 text-sm">Upload PDF, DOCX, or TXT files.</p></div>}
+                    </div>
+                </div>
+                <div></div>
+            </div>
+        </div>
+    );
+};
+
+const CreateBotModal = ({ isOpen, onClose, onCreate }) => {
+    const [name, setName] = useState('');
+    const [description, setDescription] = useState('');
+    const [isCreating, setIsCreating] = useState(false);
+    const [isSuggesting, setIsSuggesting] = useState(false);
+    const handleSubmit = async (e) => { e.preventDefault(); setIsCreating(true); await onCreate(name); setIsCreating(false); setName(''); setDescription(''); };
+    const handleSuggestName = async () => {
+        if (!description.trim()) return;
+        setIsSuggesting(true);
+        try {
+            const systemInstruction = "You are a creative naming expert for brands. Generate a single, short, and catchy name for a chatbot based on a business description. Respond with only the name itself, nothing else.";
+            const suggestedName = await callGemini(systemInstruction, `Business description: ${description}`);
+            setName(suggestedName.replace(/^"|"$/g, ''));
+        } catch (error) { console.error("Error suggesting name:", error); } 
+        finally { setIsSuggesting(false); }
+    };
+    if (!isOpen) return null;
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+                <div className="flex justify-between items-center p-5 border-b"><h3 className="text-lg font-semibold">Create a New Chatbot</h3><button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="w-6 h-6" /></button></div>
+                <form onSubmit={handleSubmit}>
+                    <div className="p-5 space-y-4">
+                         <div>
+                            <label htmlFor="bot-description" className="block text-sm font-medium text-gray-700">Business Description</label>
+                            <div className="mt-1 flex rounded-md shadow-sm">
+                                <input type="text" id="bot-description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="e.g., 'A friendly neighborhood cafe'" className="flex-1 block w-full rounded-none rounded-l-md sm:text-sm border-gray-300"/>
+                                <button type="button" onClick={handleSuggestName} disabled={isSuggesting || !description.trim()} className="relative inline-flex items-center space-x-2 px-4 py-2 border border-gray-300 text-sm font-medium rounded-r-md text-gray-700 bg-gray-50 hover:bg-gray-100 disabled:bg-gray-200">{isSuggesting ? <Loader2 className="w-5 h-5 animate-spin"/> : <Sparkles className="h-5 w-5 text-yellow-500" />} <span>Suggest Name ✨</span></button>
+                            </div>
+                        </div>
+                        <div>
+                            <label htmlFor="bot-name" className="block text-sm font-medium text-gray-700">Chatbot Name</label>
+                            <input type="text" id="bot-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name will be suggested here..." className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500" required />
+                        </div>
+                    </div>
+                    <div className="px-5 py-4 bg-gray-50 flex justify-end space-x-3"><button type="button" onClick={onClose} className="px-4 py-2 bg-white border border-gray-300 rounded-md text-sm font-medium hover:bg-gray-50">Cancel</button><button type="submit" disabled={isCreating || !name.trim()} className="inline-flex justify-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300">{isCreating && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}Create Bot</button></div>
+                </form>
+            </div>
+        </div>
+    );
+};
+
+
+// --- Public Chat Page Component ---
+const PublicChatPage = ({ botId }) => {
+    const [bot, setBot] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [messages, setMessages] = useState([]);
+    const [userInput, setUserInput] = useState('');
+    const [isTyping, setIsTyping] = useState(false);
+    const messagesEndRef = useRef(null);
+    
+    useEffect(() => {
+        const fetchBotData = async () => {
+            // This simplified fetch logic needs to be replaced with a secure, scalable solution for production,
+            // such as a Cloud Function that can access the data without exposing user IDs.
+            try {
+                // This is an insecure placeholder to find the bot across all users for the demo.
+                // DO NOT USE THIS IN PRODUCTION.
+                const usersRef = collection(db, `artifacts/${appId}/users`);
+                const usersSnapshot = await getDocs(usersRef);
+                let foundBot = null;
+                let ownerId = null;
+
+                for (const userDoc of usersSnapshot.docs) {
+                    const botDocRef = doc(db, `artifacts/${appId}/users/${userDoc.id}/chatbots`, botId);
+                    const botDoc = await getDoc(botDocRef);
+                    if (botDoc.exists()) {
+                        foundBot = botDoc.data();
+                        ownerId = userDoc.id; // Get the owner ID
+                        break;
+                    }
+                }
+
+                if (foundBot) {
+                    setBot({ ...foundBot, id: botId, ownerId: ownerId });
+                    setMessages([{ sender: 'bot', text: foundBot.appearance.welcomeMessage }]);
+                } else {
+                     setMessages([{ sender: 'bot', text: 'Hello! How can I help you today?' }]);
+                }
+            } catch (error) {
+                console.error("Could not fetch bot data, using default.", error);
+                setMessages([{ sender: 'bot', text: 'Welcome! Ask me anything.' }]);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        fetchBotData();
+    }, [botId]);
+
+    useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }, [messages]);
+
+    const handleSendMessage = async () => {
+        if (!userInput.trim()) return;
+        
+        const newMessages = [...messages, { sender: 'user', text: userInput }];
+        setMessages(newMessages);
+        const currentInput = userInput;
+        setUserInput('');
+        setIsTyping(true);
+
+        try {
+            // In a real implementation, this would also fetch and include context from the bot's data sources.
+            const systemInstruction = `You are an AI assistant named ${bot?.name || 'Chatbot'}. You are knowledgeable about the business you represent based on the provided documents. Be helpful and friendly.`;
+            const botResponse = await callGemini(systemInstruction, currentInput);
+            setMessages([...newMessages, { sender: 'bot', text: botResponse }]);
+        } catch (error) {
+            console.error("Error from Gemini:", error);
+            setMessages([...newMessages, { sender: 'bot', text: "Sorry, I'm having trouble connecting right now." }]);
+        } finally {
+            setIsTyping(false);
+        }
+    };
+
+    return (
+        <div className="flex flex-col h-screen bg-gray-100">
+            <header className="bg-blue-600 text-white p-4 shadow-md text-center">
+                <h1 className="text-2xl font-bold">{isLoading ? 'Loading Chat...' : (bot?.name || 'Chatbot Assistant')}</h1>
+            </header>
+            <main className="flex-1 overflow-y-auto p-4 space-y-4">
+                {messages.map((msg, index) => (
+                    <div key={index} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-xs lg:max-w-md px-4 py-2 rounded-2xl ${msg.sender === 'user' ? 'bg-gray-300 text-gray-800 rounded-br-lg' : 'bg-blue-600 text-white rounded-bl-lg'}`}>
+                            {msg.text}
+                        </div>
+                    </div>
+                ))}
+                {isTyping && (
+                    <div className="flex justify-start">
+                         <div className="max-w-xs lg:max-w-md px-4 py-2 rounded-2xl bg-blue-600 text-white rounded-bl-lg">
+                            <div className="flex items-center justify-center space-x-1">
+                                <span className="w-2 h-2 bg-white rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></span>
+                                <span className="w-2 h-2 bg-white rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></span>
+                                <span className="w-2 h-2 bg-white rounded-full animate-bounce" style={{animationDelay: '0.3s'}}></span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+                <div ref={messagesEndRef} />
+            </main>
+            <footer className="p-4 bg-white border-t">
+                <div className="flex items-center">
+                    <input 
+                        type="text"
+                        value={userInput}
+                        onChange={(e) => setUserInput(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+                        placeholder="Type your message..."
+                        className="flex-1 px-4 py-2 border rounded-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        disabled={isTyping || isLoading}
+                    />
+                    <button 
+                        onClick={handleSendMessage}
+                        disabled={isTyping || isLoading}
+                        className="ml-3 bg-blue-600 text-white rounded-full p-3 hover:bg-blue-700 disabled:bg-blue-300"
+                    >
+                        <Send className="w-5 h-5" />
+                    </button>
+                </div>
+            </footer>
+        </div>
+    );
+};
