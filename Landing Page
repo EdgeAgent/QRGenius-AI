@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QRBot AI - Chatbot Builder with QR Deployment</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        .gradient-bg {
+            background: linear-gradient(135deg, #6e8efb 0%, #a777e3 100%);
+        }
+        /* Chatbot styles */
+        #chatbot-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 350px;
+            height: 500px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            display: none;
+            flex-direction: column;
+            z-index: 1000;
+            transition: all 0.3s ease-in-out;
+        }
+        #chatbot-header {
+            background: linear-gradient(135deg, #6e8efb 0%, #a777e3 100%);
+            color: white;
+            padding: 15px;
+            border-radius: 12px 12px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        #chatbot-messages {
+            flex: 1;
+            padding: 15px;
+            overflow-y: auto;
+        }
+        .message {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            border-radius: 18px;
+            max-width: 80%;
+            line-height: 1.4;
+        }
+        .user-message {
+            background: #f0f0f0;
+            color: #333;
+            margin-left: auto;
+            border-bottom-right-radius: 4px;
+        }
+        .bot-message {
+            background: #6e8efb;
+            color: white;
+            margin-right: auto;
+            border-bottom-left-radius: 4px;
+        }
+        .loading-dots {
+            display: flex;
+            align-items: center;
+        }
+        .loading-dots span {
+            height: 8px;
+            width: 8px;
+            background-color: #fff;
+            border-radius: 50%;
+            display: inline-block;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+        .loading-dots .bounce1 { animation-delay: -0.32s; }
+        .loading-dots .bounce2 { animation-delay: -0.16s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1.0); }
+        }
+        #chatbot-input {
+            display: flex;
+            padding: 10px;
+            border-top: 1px solid #eee;
+        }
+        #chatbot-input input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            margin-right: 10px;
+            outline: none;
+        }
+        #chatbot-input input:focus {
+            border-color: #6e8efb;
+        }
+        #chatbot-input button {
+            background: #6e8efb;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #chatbot-toggle {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 60px;
+            height: 60px;
+            background: linear-gradient(135deg, #6e8efb 0%, #a777e3 100%);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            z-index: 999;
+            transition: all 0.3s ease-in-out;
+        }
+        .feature-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+        }
+        .pricing-card {
+            transition: all 0.3s ease-in-out;
+        }
+        .pricing-card:hover {
+            transform: scale(1.03);
+        }
+        .dashboard-preview {
+            border-radius: 12px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+        }
+        .qr-animation {
+            animation: float 6s ease-in-out infinite;
+        }
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-20px); }
+            100% { transform: translateY(0px); }
+        }
+    </style>
+</head>
+<body class="font-sans antialiased text-gray-800">
+    <!-- Navigation and other sections remain the same -->
+    <!-- ... (All HTML from previous version is included here) ... -->
+    
+    <!-- Navigation -->
+    <nav class="bg-white shadow-sm fixed w-full z-20">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex">
+                    <div class="flex-shrink-0 flex items-center">
+                        <i class="fas fa-robot text-purple-600 text-2xl mr-2"></i>
+                        <span class="text-xl font-bold text-gray-900">QRBot AI</span>
+                    </div>
+                </div>
+                <div class="hidden md:ml-6 md:flex md:items-center md:space-x-8">
+                    <a href="#features" class="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">Features</a>
+                    <a href="#pricing" class="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">Pricing</a>
+                    <a href="#verticals" class="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">Industries</a>
+                    <a href="#demo" class="text-gray-500 hover:text-gray-700 px-3 py-2 text-sm font-medium">Demo</a>
+                </div>
+                <div class="hidden md:flex items-center">
+                    <a href="#signup" class="ml-8 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-purple-600 hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
+                        Get Started
+                    </a>
+                </div>
+                <div class="md:hidden flex items-center">
+                    <button id="mobile-menu-button" class="inline-flex items-center justify-center p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-purple-500">
+                        <span class="sr-only">Open main menu</span>
+                        <i class="fas fa-bars fa-lg"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <div class="md:hidden hidden" id="mobile-menu">
+            <div class="px-2 pt-2 pb-3 space-y-1 sm:px-3">
+                 <a href="#features" class="text-gray-500 hover:text-gray-700 hover:bg-gray-50 block px-3 py-2 rounded-md text-base font-medium">Features</a>
+                <a href="#pricing" class="text-gray-500 hover:text-gray-700 hover:bg-gray-50 block px-3 py-2 rounded-md text-base font-medium">Pricing</a>
+                <a href="#verticals" class="text-gray-500 hover:text-gray-700 hover:bg-gray-50 block px-3 py-2 rounded-md text-base font-medium">Industries</a>
+                <a href="#demo" class="text-gray-500 hover:text-gray-700 hover:bg-gray-50 block px-3 py-2 rounded-md text-base font-medium">Demo</a>
+            </div>
+        </div>
+    </nav>
+     <!-- Hero Section and all other content sections -->
+    <!-- ... Rest of the HTML ... -->
+
+
+    <!-- Chatbot UI -->
+    <div id="chatbot-toggle">
+        <i id="chatbot-toggle-icon" class="fas fa-robot fa-lg"></i>
+    </div>
+    
+    <div id="chatbot-container">
+        <div id="chatbot-header">
+            <span class="font-bold">QRBot Assistant</span>
+            <button id="chatbot-close" class="bg-transparent border-none text-white cursor-pointer"><i class="fas fa-times"></i></button>
+        </div>
+        <div id="chatbot-messages">
+            <div class="message bot-message">Hello! I'm an AI assistant powered by Gemini. Ask me anything about this SaaS product!</div>
+        </div>
+        <div id="chatbot-input">
+            <input type="text" placeholder="Type your message..." id="chatbot-user-input">
+            <button id="chatbot-send"><i class="fas fa-paper-plane"></i></button>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function () {
+        // --- All previous script logic for menu, pricing, scrolling remains the same ---
+        // ...
+        
+        // --- Gemini-Powered Chatbot Functionality ---
+        const chatbotToggle = document.getElementById('chatbot-toggle');
+        const chatbotToggleIcon = document.getElementById('chatbot-toggle-icon');
+        const chatbotContainer = document.getElementById('chatbot-container');
+        const chatbotClose = document.getElementById('chatbot-close');
+        const chatbotInput = document.getElementById('chatbot-user-input');
+        const chatbotSend = document.getElementById('chatbot-send');
+        const chatbotMessages = document.getElementById('chatbot-messages');
+
+        let chatHistory = [];
+
+        // Toggle chatbot visibility
+        chatbotToggle.addEventListener('click', () => {
+            const isHidden = chatbotContainer.style.display === 'none' || chatbotContainer.style.display === '';
+            chatbotContainer.style.display = isHidden ? 'flex' : 'none';
+            chatbotToggleIcon.className = isHidden ? 'fas fa-times fa-lg' : 'fas fa-robot fa-lg';
+            chatbotToggle.style.transform = isHidden ? 'rotate(360deg)' : 'rotate(0deg)';
+        });
+
+        chatbotClose.addEventListener('click', () => {
+            chatbotContainer.style.display = 'none';
+            chatbotToggleIcon.className = 'fas fa-robot fa-lg';
+            chatbotToggle.style.transform = 'rotate(0deg)';
+        });
+
+        // Add a message to the chat window
+        function addMessage(sender, textContent) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${sender === 'user' ? 'user-message' : 'bot-message'}`;
+            msgDiv.innerHTML = textContent; // Using innerHTML to render loading dots
+            chatbotMessages.appendChild(msgDiv);
+            chatbotMessages.scrollTop = chatbotMessages.scrollHeight;
+            return msgDiv;
+        }
+
+        // Handle sending a message
+        async function sendMessage() {
+            const messageText = chatbotInput.value.trim();
+            if (!messageText) return;
+
+            addMessage('user', messageText);
+            chatbotInput.value = '';
+            chatbotInput.disabled = true;
+            chatbotSend.disabled = true;
+
+            const loadingIndicator = addMessage('bot', '<div class="loading-dots"><span class="bounce1"></span><span class="bounce2"></span><span class="bounce3"></span></div>');
+
+            try {
+                // This is where we call the Gemini API
+                const botText = await getGeminiResponse(messageText);
+                loadingIndicator.remove(); // Remove the loading dots
+                addMessage('bot', botText);
+            } catch (error) {
+                console.error("Error fetching from Gemini:", error);
+                loadingIndicator.innerHTML = "Sorry, I'm having trouble connecting. Please try again.";
+            } finally {
+                 chatbotInput.disabled = false;
+                 chatbotSend.disabled = false;
+                 chatbotInput.focus();
+            }
+        }
+        
+        // --- Backend Call to Gemini API ---
+        async function getGeminiResponse(prompt) {
+            // IMPORTANT: The API key is handled by the execution environment.
+            // Do not replace "" with a real key here.
+            const apiKey = ""; 
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            // Add context about the product for better answers
+            const systemInstruction = {
+                role: "system",
+                parts: [{ text: "You are an expert sales assistant for a SaaS product called QRBot AI. Your goal is to answer user questions about the product and encourage them to sign up. The product allows users to build AI chatbots trained on their own documents (PDFs, etc.) and deploy them via QR codes. Key features include: no-code builder, multi-source training, QR code generation, white-labeling, analytics, and multi-language support. Pricing tiers are Starter ($29), Professional ($79), Business ($199), and Enterprise ($499)."}]
+            };
+
+            chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+            
+            const payload = {
+                contents: [systemInstruction, ...chatHistory]
+            };
+
+            const response = await fetch(apiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error(`API request failed with status ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            if (result.candidates && result.candidates.length > 0 &&
+                result.candidates[0].content && result.candidates[0].content.parts &&
+                result.candidates[0].content.parts.length > 0) {
+                
+                const text = result.candidates[0].content.parts[0].text;
+                // Add the bot's response to the history for context in the next turn
+                chatHistory.push({ role: "model", parts: [{ text: text }] });
+                return text;
+
+            } else {
+                // Handle cases where the response structure is unexpected
+                console.warn("Unexpected API response structure:", result);
+                if (result.promptFeedback && result.promptFeedback.blockReason) {
+                    return `I am unable to answer that. Reason: ${result.promptFeedback.blockReason}.`;
+                }
+                return "I'm sorry, I couldn't generate a response.";
+            }
+        }
+
+        chatbotSend.addEventListener('click', sendMessage);
+        chatbotInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+    });
+    </script>
+</body>
+</html>
